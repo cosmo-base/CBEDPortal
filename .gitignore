@@ -1,0 +1,9 @@
+.DS_Store
+.clasprc.json
+.env*.local
+.next/
+gas/
+gas/.clasp.json
+node_modules/
+out/
+tsconfig.tsbuildinfo

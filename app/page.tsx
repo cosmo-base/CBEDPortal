@@ -887,6 +887,7 @@ function CompleteView({ result, onNew, onList, onBuild }: { result: SaveResult; 
       <h1>{result.editing ? '変更をスプレッドシートに保存しました' : 'スプレッドシートに登録しました'}</h1>
       <p className="muted">{result.title}{result.isEvent ? `（ID ${result.ids.join(', ')}）` : ''}</p>
       {result.build?.at && <div className="notice"><Info />{result.build.at} ごろに cbed.fsif.jp の自動ビルドが始まり、数分後にサイトへ反映されます。</div>}
+      {result.build && !result.build.scheduled && <div className="error"><AlertTriangle />{result.build.error || '自動ビルドを予約できませんでした。「サイト反映」から手動でビルドしてください。'}</div>}
       {result.isEvent && (
         <ul className="page-links">{result.ids.map((id) => <li key={id}><a href={siteEventUrl(id)} target="_blank" rel="noreferrer">{siteEventUrl(id)} <ExternalLink /></a></li>)}</ul>
       )}

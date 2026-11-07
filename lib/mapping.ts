@@ -22,6 +22,7 @@ export type SheetEvent = {
   isRecommend?: boolean
   都道府県?: string
   更新日時?: string
+  _rev?: string
 }
 
 const ONLINE = 'オンライン'
@@ -81,6 +82,7 @@ export function sheetToEvent(s: SheetEvent): EventItem {
     isPartner: !!s.isPartner,
     isRecommend: !!s.isRecommend,
     updatedAt: s['更新日時'] || '',
+    rev: s._rev || '',
   }
 }
 

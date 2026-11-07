@@ -30,6 +30,8 @@ export type EventItem = {
   isPartner: boolean
   isRecommend: boolean
   updatedAt?: string
+  /** 編集開始時の行内容のハッシュ（同時編集の検知用） */
+  rev?: string
   /** 新規登録時のみ: 同じ内容で別日にも登録する日付 */
   extraDates?: string[]
 }

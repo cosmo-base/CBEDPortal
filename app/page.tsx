@@ -190,7 +190,7 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
       try {
         const full = await fetchFull(item)
         if (duplicate) {
-          setForm(isEventItem(full) ? { ...full, id: '', isPartner: false, isRecommend: false, updatedAt: '' } : { ...full, id: '' })
+          setForm(isEventItem(full) ? { ...full, id: '', isPartner: false, isRecommend: false, updatedAt: '', rev: '' } : { ...full, id: '' })
         } else {
           setForm(full)
           setOriginal(full)
@@ -259,7 +259,7 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
       if (isEventItem(form)) {
         const event = eventToSheet(form)
         r = editing
-          ? await api('update', { id: form.id, event, expectedUpdatedAt: (original as EventItem | null)?.updatedAt ?? '' })
+          ? await api('update', { id: form.id, event, expectedRev: (original as EventItem | null)?.rev ?? '' })
           : await api('create', { event, dates: form.extraDates || [], force })
       } else {
         const launch = launchToSheet(form)

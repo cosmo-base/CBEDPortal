@@ -50,7 +50,7 @@ export type LaunchItem = {
 
 export type Target = 'events' | 'launches'
 
-export type BuildInfo = { scheduled?: boolean; at?: string; delayMin?: number }
+export type BuildInfo = { scheduled?: boolean; at?: string; delayMin?: number; error?: string }
 
 export type Meta = {
   types: string[]

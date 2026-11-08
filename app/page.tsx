@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, FileText, Filter, Info,
-  LayoutList, Loader2, LogOut, MapPin, Pencil, Plus, RefreshCw, Rocket, Search, Sparkles, UploadCloud, X,
+  ClipboardCheck, EyeOff, LayoutList, Link2Off, Loader2, LogOut, MapPin, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Search, Sparkles, Trash2, UploadCloud, X,
 } from 'lucide-react'
 import { ACTIONS_URL, ApiError, SITE_URL, Session, api, loadSession, saveSession, setAuthExpiredHandler } from '@/lib/api'
 import { extractEvent, extractLaunch, FetchedPage, Suggestion } from '@/lib/extract'
 import { eventToSheet, launchToSheet, SheetEvent, SheetLaunch, sheetToEvent, sheetToLaunch, formatTime } from '@/lib/mapping'
 import { BuildInfo, BuildRun, EventItem, LaunchItem, LocationMethod, Meta, Target, launchSites, prefectures } from '@/lib/types'
 
-type View = 'home' | 'list' | 'form' | 'detail' | 'review' | 'complete' | 'build'
+type View = 'home' | 'list' | 'form' | 'detail' | 'review' | 'complete' | 'build' | 'audit'
 type ImportMode = 'url' | 'text' | 'manual'
 type Item = EventItem | LaunchItem
 type SaveResult = { ids: string[]; build?: BuildInfo; isEvent: boolean; editing: boolean; title: string }
@@ -110,6 +110,7 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
   const [duplicates, setDuplicates] = useState<Duplicate[] | null>(null)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [pendingBuildAt, setPendingBuildAt] = useState('')
+  const [flash, setFlash] = useState('')
   const isEvent = target === 'events'
 
   const loadMeta = useCallback(async () => {
@@ -166,7 +167,7 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
     setDuplicates(null)
   }
 
-  const changeTarget = (t: Target) => { setTarget(t); setView('list') }
+  const changeTarget = (t: Target) => { setTarget(t); setFlash(''); setView('list') }
   const goHome = () => { setTarget('events'); resetForm('events'); restoreDraft('events'); setView('home') }
   const switchFormTarget = (t: Target) => { setTarget(t); resetForm(t); restoreDraft(t) }
 
@@ -284,14 +285,39 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
     }
   }
 
+  /** 非公開にする（サイトから外す）。行は「非公開」シートに移り、あとで戻せる */
+  const archiveSelected = async (reason: string) => {
+    if (!selected) return
+    const r = isEventItem(selected)
+      ? await api<{ build?: BuildInfo }>('archive', { id: selected.id, expectedRev: selected.rev ?? '', reason })
+      : await api<{ build?: BuildInfo }>('launchArchive', { id: selected.id, expectedTitle: selected.title, reason })
+    if (r.build?.at) setPendingBuildAt(r.build.at)
+    if (isEventItem(selected)) setEvents(null); else setLaunches(null)
+    setFlash(`「${selected.title}」を非公開にしました。サイトの反映後に表示されなくなります（一覧の「非公開」からいつでも戻せます）`)
+    loadMeta()
+    setView('list')
+  }
+
+  const onArchiveChanged = (build?: BuildInfo) => {
+    if (build?.at) setPendingBuildAt(build.at)
+    if (isEvent) setEvents(null); else setLaunches(null)
+    loadMeta()
+  }
+
+  const editFromAudit = (id: string) => {
+    setTarget('events')
+    goForm({ ...blankEvent(), id })
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <button className="brand" onClick={goHome} aria-label="ホームへ戻る"><div className="brand-mark">CB</div><div><strong>Cosmo Base</strong><small>情報管理</small></div></button>
         <nav>
           <button className={view === 'home' ? 'active' : ''} onClick={goHome}><Plus />新規登録</button>
-          <button className={view !== 'home' && view !== 'build' && isEvent ? 'active' : ''} onClick={() => changeTarget('events')}><LayoutList />イベント</button>
-          <button className={view !== 'home' && view !== 'build' && !isEvent ? 'active' : ''} onClick={() => changeTarget('launches')}><Rocket />打ち上げ情報</button>
+          <button className={!['home', 'build', 'audit'].includes(view) && isEvent ? 'active' : ''} onClick={() => changeTarget('events')}><LayoutList />イベント</button>
+          <button className={!['home', 'build', 'audit'].includes(view) && !isEvent ? 'active' : ''} onClick={() => changeTarget('launches')}><Rocket />打ち上げ情報</button>
+          <button className={view === 'audit' ? 'active' : ''} onClick={() => setView('audit')}><ClipboardCheck />データ点検</button>
           <button className={view === 'build' ? 'active' : ''} onClick={() => setView('build')}><UploadCloud />サイト反映{pendingBuildAt && <span className="nav-dot" title="ビルド予約中" />}</button>
         </nav>
         <div className="sidebar-foot"><span className={`status-dot${pendingBuildAt ? ' pending' : ''}`} />{pendingBuildAt ? `${pendingBuildAt.slice(11)} に自動反映予定` : 'スプレッドシート連携中'}</div>
@@ -312,6 +338,7 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
         {view === 'list' && (
           <ListView
             isEvent={isEvent} events={events} launches={launches} meta={meta} error={listError}
+            flash={flash} onDismissFlash={() => setFlash('')} onArchiveChanged={onArchiveChanged}
             onReload={() => (isEvent ? loadEvents() : loadLaunches())}
             onNew={() => goForm()} onDetail={openDetail} onEdit={(x) => goForm(x)} onCopy={(x) => goForm(x, true)}
           />
@@ -321,12 +348,13 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
             onBack={() => { setDuplicates(null); setView('form') }} onSave={save} error={error} />
         )}
         {view === 'detail' && selected && (
-          <DetailView item={selected} isEvent={isEvent} onBack={() => setView('list')} onEdit={() => goForm(selected)} onCopy={() => goForm(selected, true)} />
+          <DetailView item={selected} isEvent={isEvent} onBack={() => setView('list')} onEdit={() => goForm(selected)} onCopy={() => goForm(selected, true)} onArchive={archiveSelected} />
         )}
         {view === 'complete' && result && (
           <CompleteView result={result} onNew={() => { resetForm(target); setView('form') }} onList={() => setView('list')} onBuild={() => setView('build')} />
         )}
-        {view === 'build' && <BuildView pendingBuildAt={pendingBuildAt} setPendingBuildAt={setPendingBuildAt} />}
+        {view === 'build' && <BuildView pendingBuildAt={pendingBuildAt} setPendingBuildAt={setPendingBuildAt} fastBuild={!!meta?.fastBuild} />}
+        {view === 'audit' && <AuditView onEdit={editFromAudit} />}
       </main>
     </div>
   )
@@ -337,8 +365,10 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function ListView(p: {
   isEvent: boolean; events: EventItem[] | null; launches: LaunchItem[] | null; meta: Meta | null; error: string
+  flash: string; onDismissFlash: () => void; onArchiveChanged: (build?: BuildInfo) => void
   onReload: () => void; onNew: () => void; onDetail: (x: Item) => void; onEdit: (x: Item) => void; onCopy: (x: Item) => void
 }) {
+  const [scope, setScope] = useState<'active' | 'archived'>('active')
   const [query, setQuery] = useState('')
   const [past, setPast] = useState(false)
   const [sort, setSort] = useState('date')
@@ -388,10 +418,16 @@ function ListView(p: {
           <p className="muted">{p.isEvent ? 'イベント情報を確認・編集・登録します。' : 'ロケット打ち上げ予定を確認・編集・登録します。'} <span className="jst">日時は日本時間（JST）</span></p>
         </div>
         <div className="head-actions">
-          <button className="secondary" onClick={p.onReload} title="スプレッドシートから再読み込み"><RefreshCw />再読み込み</button>
+          {scope === 'active' && <button className="secondary" onClick={p.onReload} title="スプレッドシートから再読み込み"><RefreshCw />再読み込み</button>}
           <button className="primary add-primary" onClick={p.onNew}><Plus />新規登録</button>
         </div>
       </div>
+      {p.flash && <div className="notice flash"><Check /><span>{p.flash}</span><button className="link-btn" onClick={p.onDismissFlash} aria-label="閉じる"><X /></button></div>}
+      <div className="import-tabs scope-tabs" role="tablist">
+        <button role="tab" aria-selected={scope === 'active'} className={scope === 'active' ? 'selected' : ''} onClick={() => setScope('active')}><LayoutList />公開中</button>
+        <button role="tab" aria-selected={scope === 'archived'} className={scope === 'archived' ? 'selected' : ''} onClick={() => setScope('archived')}><EyeOff />非公開</button>
+      </div>
+      {scope === 'archived' ? <ArchivedList key={String(p.isEvent)} isEvent={p.isEvent} onChanged={p.onArchiveChanged} /> : <>
       <div className="toolbar">
         <div className="search secondary-search"><span className="search-label">補助検索</span><Search />
           <input aria-label="検索" placeholder={p.isEvent ? 'ID・イベント名・主催者・会場を検索' : 'タイトル・ロケット・射場を検索'} value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -454,6 +490,7 @@ function ListView(p: {
         <span>{rows.length ? `${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, filtered.length)}件を表示` : ''}</span>
         <div><button disabled={page === 1} onClick={() => setPage(page - 1)} aria-label="前のページ"><ChevronLeft /></button><b>{page} / {pages}</b><button disabled={page === pages} onClick={() => setPage(page + 1)} aria-label="次のページ"><ChevronRight /></button></div>
       </div>
+      </>}
     </section>
   )
 }
@@ -854,7 +891,18 @@ function ReviewRow({ label, value }: { label: string; value: React.ReactNode }) 
   return <div className="review-row"><span>{label}</span><strong>{value}</strong></div>
 }
 
-function DetailView({ item, isEvent, onBack, onEdit, onCopy }: { item: Item; isEvent: boolean; onBack: () => void; onEdit: () => void; onCopy: () => void }) {
+function DetailView({ item, isEvent, onBack, onEdit, onCopy, onArchive }: { item: Item; isEvent: boolean; onBack: () => void; onEdit: () => void; onCopy: () => void; onArchive: (reason: string) => Promise<void> }) {
+  const [archiving, setArchiving] = useState(false)
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  // イベントは編集用の内容（rev）を読み込むまで非公開操作をさせない
+  const ready = !isEventItem(item) || !!item.rev
+  const doArchive = async () => {
+    setBusy(true)
+    setError('')
+    try { await onArchive(reason.trim()) } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+  }
   return (
     <section className="content narrow">
       <div className="page-head">
@@ -871,6 +919,24 @@ function DetailView({ item, isEvent, onBack, onEdit, onCopy }: { item: Item; isE
         {reviewRows(item).slice(1).filter(([k]) => !['開催日', '時間', '予定日', '予定時刻'].includes(k)).map(([k, v]) => <DetailBlock key={k} label={k} value={v || '未入力'} />)}
         {isEventItem(item) && <a className="external" href={siteEventUrl(item.id)} target="_blank" rel="noreferrer">cbed.fsif.jp で見る <ExternalLink /></a>}
         {item.link && <a className="external" href={item.link} target="_blank" rel="noreferrer">公式・申込URLを開く <ExternalLink /></a>}
+      </div>
+      <div className="detail-card danger-zone">
+        <h2 className="card-title">サイトから外す</h2>
+        {!archiving ? (
+          <>
+            <p className="muted">中止になったイベントや誤登録を非公開にします。行は「{isEvent ? '非公開' : 'ロケット打上（非公開）'}」シートに移り、一覧の「非公開」からいつでも元に戻せます。</p>
+            <button className="secondary danger" onClick={() => setArchiving(true)} disabled={!ready}><EyeOff />非公開にする</button>
+          </>
+        ) : (
+          <>
+            <Field label="理由（任意）"><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="例：中止・延期、重複登録、誤登録" maxLength={200} /></Field>
+            {error && <div className="error"><AlertTriangle />{error}</div>}
+            <div className="complete-actions left">
+              <button className="secondary" onClick={() => setArchiving(false)} disabled={busy}>やめる</button>
+              <button className="primary danger" onClick={doArchive} disabled={busy}>{busy ? <Loader2 className="spin" /> : <EyeOff />}非公開にする</button>
+            </div>
+          </>
+        )}
       </div>
     </section>
   )
@@ -903,7 +969,7 @@ function CompleteView({ result, onNew, onList, onBuild }: { result: SaveResult; 
 const STATUS_LABEL: Record<string, string> = { success: '成功', failure: '失敗', cancelled: 'キャンセル', in_progress: 'ビルド中', queued: '待機中', pending: '待機中', waiting: '待機中', skipped: 'スキップ' }
 const EVENT_LABEL: Record<string, string> = { workflow_dispatch: '管理画面', push: 'コード更新', schedule: '定期実行' }
 
-function BuildView({ pendingBuildAt, setPendingBuildAt }: { pendingBuildAt: string; setPendingBuildAt: (s: string) => void }) {
+function BuildView({ pendingBuildAt, setPendingBuildAt, fastBuild }: { pendingBuildAt: string; setPendingBuildAt: (s: string) => void; fastBuild: boolean }) {
   const [runs, setRuns] = useState<BuildRun[] | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -947,7 +1013,7 @@ function BuildView({ pendingBuildAt, setPendingBuildAt }: { pendingBuildAt: stri
       <div className="page-head"><div>
         <p className="eyebrow">BUILD / サイト反映</p>
         <h1>cbed.fsif.jp への反映</h1>
-        <p className="muted">サイトは GitHub Actions でスプレッドシートを読み込んでビルドし、イベントごとの個別ページを作っています。登録・編集すると、スプレッドシートの公開CSVが更新されるのを待ってから自動でビルドされます（続けて登録した場合はまとめて1回）。</p>
+        <p className="muted">サイトは GitHub Actions でスプレッドシートを読み込んでビルドし、イベントごとの個別ページを作っています。登録・編集・非公開にすると、{fastBuild ? '約1分後' : '公開CSVが更新されるのを待って約10分後'}に自動でビルドされます（続けて操作した場合はまとめて1回）。</p>
       </div><div className="head-actions"><button className="secondary" onClick={load}><RefreshCw />状況を更新</button></div></div>
       {pendingBuildAt && <div className="notice"><Info />{pendingBuildAt} ごろに自動ビルドが始まります。</div>}
       <div className="detail-card">
@@ -963,10 +1029,226 @@ function BuildView({ pendingBuildAt, setPendingBuildAt }: { pendingBuildAt: stri
       {error && <div className="error"><AlertTriangle />{error}</div>}
       <div className="detail-card">
         <h2 className="card-title">今すぐビルド</h2>
-        <p className="muted">スプレッドシートを直接編集したときなどに使います。公開CSVへの反映には約5分かかるため、編集直後だと新しい内容が反映されないことがあります。</p>
+        <p className="muted">スプレッドシートを直接編集したときなどに使います。{fastBuild ? 'ビルドはスプレッドシートの最新の内容を読み込みます。' : '公開CSVへの反映には約5分かかるため、編集直後だと新しい内容が反映されないことがあります。'}</p>
         {confirming
           ? <div className="complete-actions left"><button className="secondary" onClick={() => setConfirming(false)}>やめる</button><button className="primary" onClick={buildNow} disabled={busy}>{busy ? <Loader2 className="spin" /> : <UploadCloud />}ビルドを開始する</button></div>
           : <button className="primary" onClick={() => setConfirming(true)}><UploadCloud />今すぐビルド</button>}
+      </div>
+    </section>
+  )
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 非公開にした情報
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+type ArchivedRow = { id: string; title: string; date: string; sub: string; archivedAt: string; archivedBy: string; reason: string }
+
+function ArchivedList({ isEvent, onChanged }: { isEvent: boolean; onChanged: (build?: BuildInfo) => void }) {
+  const [rows, setRows] = useState<ArchivedRow[] | null>(null)
+  const [error, setError] = useState('')
+  const [busyId, setBusyId] = useState('')
+  const [confirmPurge, setConfirmPurge] = useState('')
+  const [message, setMessage] = useState('')
+
+  const load = useCallback(async () => {
+    setError('')
+    try {
+      if (isEvent) {
+        const r = await api<{ events: (SheetEvent & { archivedAt: string; archivedBy: string; archiveReason: string })[] }>('archiveList')
+        setRows(r.events.map((e) => ({ id: String(e.id), title: e.title, date: e.date, sub: [e.location, e.organizer].filter(Boolean).join(' / '), archivedAt: e.archivedAt, archivedBy: e.archivedBy, reason: e.archiveReason })))
+      } else {
+        const r = await api<{ launches: Record<string, string>[] }>('launchArchiveList')
+        setRows(r.launches.map((l) => ({ id: l.id, title: l.title, date: l.date, sub: [l.rocket, l.location].filter(Boolean).join(' / '), archivedAt: l['非公開日時'] || '', archivedBy: l['非公開にした人'] || '', reason: l['理由'] || '' })))
+      }
+    } catch (e) {
+      setError((e as Error).message)
+      setRows([])
+    }
+  }, [isEvent])
+  useEffect(() => { load() }, [load])
+
+  const act = async (row: ArchivedRow, kind: 'restore' | 'purge') => {
+    setBusyId(row.id)
+    setError('')
+    setMessage('')
+    try {
+      const action = isEvent ? kind : kind === 'restore' ? 'launchRestore' : 'launchPurge'
+      const r = await api<{ build?: BuildInfo }>(action, isEvent ? { id: row.id } : { id: row.id, expectedTitle: row.title })
+      if (kind === 'restore') { onChanged(r.build); setMessage(`「${row.title}」を公開中に戻しました。サイトの反映後に表示されます。`) }
+      else setMessage(`「${row.title}」を完全に削除しました。`)
+      setConfirmPurge('')
+      await load()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  return (
+    <>
+      <p className="muted small-note">非公開にした{isEvent ? 'イベント' : '打ち上げ情報'}はサイトに表示されません。「公開に戻す」で元のシートの末尾に戻ります{isEvent ? '（IDはそのまま）' : ''}。</p>
+      {message && <div className="notice"><Check />{message}</div>}
+      {error && <div className="error"><AlertTriangle />{error}</div>}
+      {!rows ? <div className="empty"><Loader2 className="spin" /><h3>読み込み中…</h3></div> : rows.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>{isEvent ? 'イベント名' : 'タイトル'}</th><th>日付</th><th>非公開にした日・人</th><th>理由</th><th></th></tr></thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="static-row">
+                  <td><strong>{r.title}</strong><small>{isEvent ? `ID ${r.id}` : r.sub}{isEvent && r.sub ? ` · ${r.sub}` : ''}</small></td>
+                  <td>{r.date}</td>
+                  <td>{r.archivedAt}<small>{r.archivedBy}</small></td>
+                  <td>{r.reason || <span className="muted">—</span>}</td>
+                  <td>
+                    {confirmPurge === r.id ? (
+                      <div className="row-confirm">
+                        <span>元に戻せません。削除しますか？</span>
+                        <button className="secondary" onClick={() => setConfirmPurge('')}>やめる</button>
+                        <button className="primary danger" onClick={() => act(r, 'purge')} disabled={busyId === r.id}>削除する</button>
+                      </div>
+                    ) : (
+                      <div className="row-actions">
+                        <button title="公開に戻す" onClick={() => act(r, 'restore')} disabled={!!busyId}>{busyId === r.id ? <Loader2 className="spin" /> : <RotateCcw />}</button>
+                        <button title="完全に削除" onClick={() => setConfirmPurge(r.id)} disabled={!!busyId}><Trash2 /></button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <div className="empty"><EyeOff /><h3>非公開にした{isEvent ? 'イベント' : '打ち上げ情報'}はありません</h3><p>詳細画面の「非公開にする」でサイトから外せます。</p></div>}
+    </>
+  )
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// データ点検
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+type Issue = { id: string; title: string; date: string; endDate: string; row: number; level: 'error' | 'warn'; code: string; message: string }
+type Broken = { id: string; title: string; date: string; url: string; status: number }
+
+const ISSUE_LABEL: Record<string, string> = {
+  id: 'ID', 'id-dup': 'IDの重複', title: 'イベント名', date: '日付', time: '時間', location: '会場', latlng: '緯度・経度',
+  type: 'イベント形式', difficulty: '対象レベル', pref: '都道府県', link: 'リンク', dup: '重複の可能性',
+}
+
+function AuditView({ onEdit }: { onEdit: (id: string) => void }) {
+  const [issues, setIssues] = useState<Issue[] | null>(null)
+  const [total, setTotal] = useState(0)
+  const [error, setError] = useState('')
+  const [upcoming, setUpcoming] = useState(true)
+  const [level, setLevel] = useState<'' | 'error' | 'warn'>('')
+  const [code, setCode] = useState('')
+  const [links, setLinks] = useState<{ running: boolean; checked: number; total: number; broken: Broken[]; done: boolean } | null>(null)
+  const today = todayJst()
+
+  const load = useCallback(async () => {
+    setError('')
+    setIssues(null)
+    try {
+      const r = await api<{ issues: Issue[]; total: number }>('audit')
+      setIssues(r.issues)
+      setTotal(r.total)
+    } catch (e) {
+      setError((e as Error).message)
+      setIssues([])
+    }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const scoped = useMemo(() => (issues || []).filter((i) => !upcoming || (i.endDate || i.date || '9999') >= today), [issues, upcoming, today])
+  const shown = scoped.filter((i) => (!level || i.level === level) && (!code || i.code === code))
+  const counts = scoped.reduce<Record<string, number>>((m, i) => { m[i.code] = (m[i.code] || 0) + 1; return m }, {})
+  const errors = scoped.filter((i) => i.level === 'error').length
+
+  const runLinkCheck = async () => {
+    let state = { running: true, checked: 0, total: 0, broken: [] as Broken[], done: false }
+    setLinks(state)
+    try {
+      while (!state.done) {
+        const r = await api<{ checked: number; total: number; done: boolean; broken: Broken[] }>('linkCheck', { offset: state.checked, limit: 40 })
+        state = { running: !r.done, checked: r.checked, total: r.total, broken: [...state.broken, ...r.broken], done: r.done }
+        setLinks(state)
+      }
+    } catch (e) {
+      setError((e as Error).message)
+      setLinks({ ...state, running: false })
+    }
+  }
+
+  return (
+    <section className="content">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">AUDIT / データ点検</p>
+          <h1>データ点検</h1>
+          <p className="muted">スプレッドシート（シート1）の全{total ? ` ${total} ` : ''}件を点検し、サイトで正しく表示されない行や確認した方がよい行を一覧にします。</p>
+        </div>
+        <div className="head-actions"><button className="secondary" onClick={load}><RefreshCw />もう一度点検</button></div>
+      </div>
+      {error && <div className="error"><AlertTriangle />{error}</div>}
+
+      <div className="audit-summary">
+        <div className={`audit-stat${errors ? ' bad' : ' good'}`}><b>{issues ? errors : '…'}</b><span>要修正</span><small>サイトで正しく表示されない</small></div>
+        <div className="audit-stat"><b>{issues ? scoped.length - errors : '…'}</b><span>要確認</span><small>直した方がよい</small></div>
+        <div className="audit-codes">
+          {Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([c, n]) => (
+            <button key={c} className={code === c ? 'chip-selected' : ''} onClick={() => setCode(code === c ? '' : c)}>{ISSUE_LABEL[c] || c} {n}</button>
+          ))}
+        </div>
+      </div>
+
+      <div className="toolbar">
+        <label className="check"><input type="checkbox" checked={upcoming} onChange={(e) => setUpcoming(e.target.checked)} />開催前のイベントだけ</label>
+        <label className="sort">重要度<select value={level} onChange={(e) => setLevel(e.target.value as '' | 'error' | 'warn')}><option value="">すべて</option><option value="error">要修正</option><option value="warn">要確認</option></select></label>
+      </div>
+
+      <div className="list-meta"><span>{issues ? `${shown.length}件` : '点検中…'}</span><span>行をクリックすると編集できます</span></div>
+      {!issues ? (
+        <div className="empty"><Loader2 className="spin" /><h3>点検中…</h3><p>件数が多いと数秒かかります。</p></div>
+      ) : shown.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>重要度</th><th>イベント名</th><th>開催日</th><th>内容</th><th></th></tr></thead>
+            <tbody>
+              {shown.map((i, n) => (
+                <tr key={`${i.row}-${i.code}-${n}`} onClick={() => i.id && onEdit(i.id)}>
+                  <td><Badge tone={i.level === 'error' ? 'amber' : 'neutral'}>{i.level === 'error' ? '要修正' : '要確認'}</Badge></td>
+                  <td><strong>{i.title || '（タイトルなし）'}</strong><small>{i.id ? `ID ${i.id}` : ''} · {i.row} 行目</small></td>
+                  <td>{i.date}</td>
+                  <td>{i.message}</td>
+                  <td><div className="row-actions">{i.id && <button title="編集" onClick={(e) => { e.stopPropagation(); onEdit(i.id) }}><Pencil /></button>}</div></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="empty"><Check /><h3>問題は見つかりませんでした</h3><p>{upcoming ? '「開催前のイベントだけ」を外すと過去のイベントも点検できます。' : ''}</p></div>
+      )}
+
+      <div className="detail-card link-check">
+        <h2 className="card-title"><Link2Off /> 申込リンクの確認</h2>
+        <p className="muted">開催前のイベントの申込・詳細リンクに実際にアクセスし、ページが存在しない（404 など）ものを探します。件数によって1〜数分かかります。</p>
+        {links && (
+          <p className="muted">{links.running ? <><Loader2 className="spin" /> 確認中… </> : null}{links.checked} / {links.total} 件のリンクを確認{links.done ? ` · 切れているリンク ${links.broken.length} 件` : ''}</p>
+        )}
+        {!!links?.broken.length && (
+          <ul className="broken-links">
+            {links.broken.map((b) => (
+              <li key={`${b.id}-${b.url}`}>
+                <button className="link-btn" onClick={() => onEdit(b.id)}><Pencil />ID {b.id}</button>
+                <span>{b.date} {b.title}</span>
+                <a href={b.url} target="_blank" rel="noreferrer">{b.status ? `HTTP ${b.status}` : '接続できません'} <ExternalLink /></a>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button className="secondary" onClick={runLinkCheck} disabled={!!links?.running}>{links?.running ? <Loader2 className="spin" /> : <Link2Off />}{links ? 'もう一度確認' : 'リンクを確認する'}</button>
       </div>
     </section>
   )

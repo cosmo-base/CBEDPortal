@@ -3,7 +3,7 @@
 .env*.local
 .next/
 gas/
-gas/.clasp.json
+next-env.d.ts
 node_modules/
 out/
 tsconfig.tsbuildinfo

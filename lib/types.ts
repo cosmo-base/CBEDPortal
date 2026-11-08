@@ -60,6 +60,8 @@ export type Meta = {
   nextId: number
   total: number
   pendingBuildAt: string
+  /** EXPORT_KEY が設定済みで、ビルドが最新データを直接読める */
+  fastBuild?: boolean
 }
 
 export type BuildRun = {

@@ -1,11 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, FileText, Filter, Info,
   ClipboardCheck, EyeOff, LayoutList, Link2Off, Loader2, LogOut, MapPin, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Search, Sparkles, Trash2, UploadCloud, X,
 } from 'lucide-react'
-import { ACTIONS_URL, ApiError, SITE_URL, Session, api, loadSession, saveSession, setAuthExpiredHandler } from '@/lib/api'
+import { ACTIONS_URL, ApiError, SITE_URL, Session, api } from '@/lib/api'
+import { getIdToken, mountGoogleButton, onTokenChange, signOut, startGoogleAuth } from '@/lib/google-auth'
 import { extractEvent, extractLaunch, FetchedPage, Suggestion } from '@/lib/extract'
 import { eventToSheet, launchToSheet, SheetEvent, SheetLaunch, sheetToEvent, sheetToLaunch, formatTime } from '@/lib/mapping'
 import { BuildInfo, BuildRun, EventItem, LaunchItem, LocationMethod, Meta, Target, launchSites, prefectures } from '@/lib/types'
@@ -44,48 +45,58 @@ function DateText({ item }: { item: Item }) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 export default function Page() {
   const [session, setSession] = useState<Session | null>(null)
-  const [ready, setReady] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState('')
   useEffect(() => {
-    setSession(loadSession())
-    setReady(true)
-    setAuthExpiredHandler(() => setSession(null))
+    // ID トークンが変わるたびに：無くなればログイン画面へ。新しく取れたら（未ログインなら）使えるかを GAS に確かめる
+    const handle = async (token: string | null) => {
+      if (!token) {
+        setSession(null)
+        return
+      }
+      setChecking(true)
+      try {
+        const r = await api<{ me: Session }>('whoami')
+        // 確かめている間にログアウトや取り直しがあれば、古い結果は使わない
+        if (getIdToken() !== token) return
+        setError('')
+        setSession((cur) => cur ?? r.me)
+      } catch (e) {
+        if (getIdToken() !== token) return
+        setError((e as Error).message)
+        // 使えないアカウントのままにせず、別のアカウントを選べるようにする
+        if (e instanceof ApiError && e.code !== 'ACCESS_UNAVAILABLE') signOut()
+      } finally {
+        setChecking(false)
+      }
+    }
+    const off = onTokenChange((t) => { void handle(t) })
+    startGoogleAuth().catch((e) => setError((e as Error).message))
+    const t = getIdToken()
+    if (t) void handle(t)
+    return off
   }, [])
-  if (!ready) return null
-  if (!session) return <LoginView onLogin={(s) => { saveSession(s); setSession(s) }} />
-  return <Admin session={session} onLogout={() => { api('logout').catch(() => {}); saveSession(null); setSession(null) }} />
+  if (!session) return <LoginView checking={checking} error={error} />
+  return <Admin session={session} onLogout={() => { setError(''); signOut() }} />
 }
 
-function LoginView({ onLogin }: { onLogin: (s: Session) => void }) {
-  const [name, setName] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  useEffect(() => { try { setName(localStorage.getItem('cbed-admin-name') || '') } catch { /* ignore */ } }, [])
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      const r = await api<{ token: string; name: string }>('login', {}, { name, password })
-      try { localStorage.setItem('cbed-admin-name', r.name) } catch { /* ignore */ }
-      onLogin({ token: r.token, name: r.name })
-    } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
+function LoginView({ checking, error }: { checking: boolean; error: string }) {
+  const buttonRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    mountGoogleButton(buttonRef.current)
+    return () => mountGoogleButton(null)
+  }, [])
   return (
     <div className="login-shell">
-      <form className="login-card" onSubmit={submit}>
+      <div className="login-card">
         <div className="brand static"><div className="brand-mark">CB</div><div><strong>Cosmo Base</strong><small>情報管理</small></div></div>
         <h1>ログイン</h1>
-        <p className="muted">CBED（cbed.fsif.jp）のイベント・打ち上げ情報を管理します。</p>
-        <Field label="担当者名" required><input value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" maxLength={40} placeholder="例：山田" required /></Field>
-        <Field label="パスワード" required><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required /></Field>
+        <p className="muted">CBED（cbed.fsif.jp）のイベント・打ち上げ情報を管理します。FSIF Portal と同じ Google アカウントでログインしてください。</p>
+        <div className="google-button" ref={buttonRef} />
+        {checking && <p className="muted login-status"><Loader2 className="spin" />権限を確認しています…</p>}
         {error && <div className="error"><AlertTriangle />{error}</div>}
-        <button className="primary wide" disabled={busy}>{busy ? <Loader2 className="spin" /> : null}ログイン</button>
-      </form>
+        <p className="muted login-note">使えるかどうかは FSIF の Access Manager で決まります。ログインできない場合は、ポータルの全権管理者に CBED 運営ページの役割を付けてもらってください。</p>
+      </div>
     </div>
   )
 }
@@ -325,7 +336,7 @@ function Admin({ session, onLogout }: { session: Session; onLogout: () => void }
       <main className="main">
         <header className="topbar">
           <span className="topbar-title">CBED 運営ページ</span>
-          <div className="user-chip"><span>{session.name} さん</span><button className="link-btn" onClick={onLogout}><LogOut />ログアウト</button></div>
+          <div className="user-chip"><span title={session.email}>{session.name} さん</span><button className="link-btn" onClick={onLogout}><LogOut />ログアウト</button></div>
         </header>
 
         {(view === 'home' || view === 'form') && (

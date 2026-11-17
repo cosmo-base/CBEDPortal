@@ -27,17 +27,23 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Check GAS URL
+      - name: Check settings
         env:
           GAS_API_URL: ${{ vars.GAS_API_URL }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
         run: |
           if [ -z "$GAS_API_URL" ]; then
             echo "::error::リポジトリの Variables に GAS_API_URL（GAS ウェブアプリの …/exec URL）を設定してください"
             exit 1
           fi
+          if [ -z "$GOOGLE_CLIENT_ID" ]; then
+            echo "::error::リポジトリの Variables に GOOGLE_CLIENT_ID（FSIF Portal と同じ Google ログインのクライアントID）を設定してください"
+            exit 1
+          fi
       - name: Build
         env:
           NEXT_PUBLIC_GAS_API_URL: ${{ vars.GAS_API_URL }}
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
         run: pnpm build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

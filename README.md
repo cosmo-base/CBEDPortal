@@ -5,6 +5,7 @@ Cosmo Base Event Database（https://cbed.fsif.jp/ ）にイベント・ロケッ
 - 管理画面: **https://event.admin.fsif.jp/** （このリポジトリの Next.js アプリを静的エクスポートし GitHub Pages で公開）
 - データ: 既存の Google スプレッドシート「CBED」の `シート1`（イベント）と `ロケット打上`
 - API: Google Apps Script（コードは GitHub には置かず、GAS プロジェクト側で管理）
+- ログイン: FSIF Portal と同じ Google アカウント。使える人は FSIF の Access Manager（ポータルの `/access/`）で CBED 運営ページの役割が付いている人（役割の種類は問わない）
 - サイト反映: GAS から [`cosmo-base/event_database`](https://github.com/cosmo-base/event_database) の GitHub Actions（`nextjs.yml`）を起動して再ビルド → `/{id}/` の個別ページが生成される
 
 ```
@@ -52,7 +53,11 @@ CBED スプレッドシートにはすでに GAS（`onOpen` の「自動入力�
 
    | プロパティ | 必須 | 値 |
    | --- | --- | --- |
-   | `ADMIN_PASSWORD` | ✅ | 管理画面のログインパスワード（長めのものを推奨） |
+   | `GOOGLE_CLIENT_ID` | ✅ | Google ログインのクライアントID（FSIF Portal と同じ） |
+   | `ACCESS_GAS_URL` | ✅ | Access Manager の GAS の URL（…/exec） |
+   | `ACCESS_TOOL_ID` | ✅ | Access Manager での CBED 運営ページのツールID（下記「Access Manager」） |
+   | `ACCESS_TOOL_KEY` | ✅ | 同じく Access Manager のキー |
+   | `ADMIN_PASSWORD` | | 以前の共通パスワード。ある間だけパスワードでのログインも受け付ける（移行が済んだら削除） |
    | `GITHUB_TOKEN` | ✅ | 下記 2. で作る GitHub トークン |
    | `SPREADSHEET_ID` | | 既定: `1jl7DqMAcPN92p7RbMeLRE7RPuvea3j-lsAMSs8M1Xj4`（CBED） |
    | `SHEET_NAME` | | 既定: `シート1` |
@@ -66,7 +71,7 @@ CBED スプレッドシートにはすでに GAS（`onOpen` の「自動入力�
 6. 「デプロイ → 新しいデプロイ → 種類: ウェブアプリ」
    - 次のユーザーとして実行: **自分**
    - アクセスできるユーザー: **全員**
-     （ページ自体はパスワードで保護。Google アカウント不要で呼び出せるようにするため）
+     （画面から ID トークン付きで呼び出すため。誰が使えるかは GAS が毎回 Google の ID トークンと Access Manager で確かめる）
    - 発行された `https://script.google.com/macros/s/…/exec` を控える
 
 > コードを変更したら「デプロイを管理 → 編集 → バージョン: 新バージョン」で同じ URL のまま更新できます。
@@ -84,13 +89,23 @@ GitHub → Settings → Developer settings → **Fine-grained personal access to
 ### 3. 管理画面を event.admin.fsif.jp で公開
 
 1. このリポジトリの Settings → Secrets and variables → Actions → **Variables** に
-   `GAS_API_URL` = 手順1で控えた `…/exec` の URL を登録（URL は秘密情報ではありませんが、API はパスワードで保護されています）
+   `GAS_API_URL` = 手順1で控えた `…/exec` の URL、`GOOGLE_CLIENT_ID` = FSIF Portal と同じ Google ログインのクライアントID を登録（どちらも秘密情報ではありません）
 2. Settings → Pages → Source: **GitHub Actions**
 3. `main` に push すると `.github/workflows/pages.yml` が `pnpm build`（静的エクスポート → `out/`）して公開
 4. DNS（fsif.jp）に CNAME レコードを追加: `event.admin` → `cosmo-base.github.io`
 5. Settings → Pages → Custom domain が `event.admin.fsif.jp` になっていることを確認し、「Enforce HTTPS」をオン
 
-### 4. サイトへの反映を速くする（推奨）
+### 4. Access Manager（使える人）
+
+1. Google Cloud Console のポータルの OAuth クライアントの「承認済みの JavaScript 生成元」に `https://event.admin.fsif.jp` を追加
+2. ポータルの Access Manager（`/access/`）の「ツール・同期」で CBED 運営ページを取り込み、「役割・連携を設定」で役割を決め（例：ひな形「利用者／管理者」。どの役割でも全機能を使える）、連携状態を「連携済み」にする
+3. 使う人に役割を付ける（部署のテンプレートでも、手動でもよい）。付け外しは最大5分で反映
+4. Access Manager の GAS エディタで `issueToolKeys` を実行し、ログに出た CBED 運営ページのツールIDとキーを、この GAS の `ACCESS_TOOL_ID`・`ACCESS_TOOL_KEY` に設定
+5. この GAS のエディタで `testAccessLink`（メールアドレスを書き換えて）を実行し、`"allowed":true` が返ることを確かめる
+
+以前のパスワードからの移行：上をそろえ、GAS を新しいバージョンでデプロイしてから画面を公開する。全員が Google でログインできると確かめたら、スクリプトプロパティの `ADMIN_PASSWORD` を削除する。
+
+### 5. サイトへの反映を速くする（推奨）
 
 「ウェブに公開」した CSV は更新まで約5分かかるため、そのままだとビルドを10分待たせています。
 ビルドだけ GAS から最新の CSV を読むようにすると、保存から約1分でビルドが始まります（閲覧者向けの検索・地図ページは今まで通り公開CSVを読みます）。
@@ -101,9 +116,9 @@ GitHub → Settings → Developer settings → **Fine-grained personal access to
 
 Secrets が未設定のときや GAS から取得できなかったときは、自動で公開CSVを読みます。
 
-### 5. 動作確認
+### 6. 動作確認
 
-1. https://event.admin.fsif.jp/ に担当者名とパスワードでログイン
+1. https://event.admin.fsif.jp/ に Google でログイン（右上に Access Manager の名前が出る）
 2. テスト用イベントを登録 → スプレッドシートの最終行に追加されることを確認
 3. 「サイト反映」タブで自動ビルド予約時刻を確認 → ビルド成功後 `https://cbed.fsif.jp/{ID}/` が表示されることを確認
 4. テスト行はスプレッドシートから削除し、もう一度ビルド
@@ -113,7 +128,8 @@ Secrets が未設定のときや GAS から取得できなかったときは、�
 ```
 app/page.tsx           管理画面（ログイン・登録・一覧・詳細・確認・完了・サイト反映）
 app/globals.css        スタイル
-lib/api.ts             GAS との通信・セッション
+lib/api.ts             GAS との通信（ID トークンを付ける）
+lib/google-auth.ts     Google ログイン（ID トークンの保持・取り直し）
 lib/mapping.ts         シートの列 ⇔ フォーム項目の変換（時間・開催方法など）
 lib/extract.ts         URL・文章からの入力候補づくり
 lib/types.ts           型・都道府県・射場の一覧
@@ -124,7 +140,7 @@ public/CNAME           event.admin.fsif.jp
 ### ローカルで動かす
 
 ```bash
-cp .env.example .env.local   # NEXT_PUBLIC_GAS_API_URL を設定
+cp .env.example .env.local   # NEXT_PUBLIC_GAS_API_URL・NEXT_PUBLIC_GOOGLE_CLIENT_ID を設定
 pnpm install
 pnpm dev
 ```
@@ -137,7 +153,7 @@ pnpm dev
 - `更新日時` 列は、既存の `onEdit` と同じ `yyyy-MM-dd` 形式で登録・編集時に記録します（`onEdit` は手入力にしか反応しないため API 側で記録）。
 - 同時編集は更新日時ではなく行の内容で検知するので、同じ日にシートを直接編集された場合も上書きを防げます。
 - 管理画面で登録したイベントは緯度経度を入れて保存するので、既存の「自動入力」メニューを使う必要はありません（使っても空欄だけを埋めるので問題ありません）。
-- 認証はパスワード + 6時間有効のセッショントークン（GAS の CacheService）です。10回連続で失敗すると10分間ログインできなくなります。
+- 認証は Google の ID トークン（約1時間。タブの sessionStorage にだけ置き、失効の少し前に自動で取り直す）です。GAS は毎回トークンを検証し、Access Manager の権限を5分キャッシュします。Access Manager に問い合わせできないときは通しません。操作ログと「非公開にした人」には「名前（メールアドレス）」が残ります。
 - `ロケット打上` シートには ID 列がないため、行番号を ID として扱います。編集時はタイトルが一致するか確認し、行がずれていたら保存を止めます。
 - 非公開にした行は別シートに移るだけなので、スプレッドシートから直接戻すこともできます。非公開にしたイベントの ID は新規登録で再利用しません（戻したときに URL がぶつからないように）。
 - 「住所」はシートに列がないため保存されません（位置の取得にだけ使います）。

@@ -272,3 +272,7 @@ tr.static-row{cursor:default}
 .broken-links li span{flex:1;min-width:200px}
 .broken-links a{color:#a74740;display:inline-flex;gap:4px;align-items:center;font-size:12px}
 .broken-links svg{width:13px}
+.google-button{display:flex;justify-content:center;min-height:44px;margin:4px 0 12px}
+.login-status{display:flex;align-items:center;justify-content:center;gap:6px}
+.login-status svg{width:14px;height:14px}
+.login-card .login-note{margin:16px 0 0;font-size:11px}

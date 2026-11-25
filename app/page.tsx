@@ -5,8 +5,8 @@ import {
   AlertTriangle, CalendarDays, Check, ChevronLeft, ChevronRight, Copy, ExternalLink, FileText, Filter, Info,
   ClipboardCheck, EyeOff, LayoutList, Link2Off, Loader2, LogOut, MapPin, Pencil, Plus, RefreshCw, Rocket, RotateCcw, Search, Sparkles, Trash2, UploadCloud, X,
 } from 'lucide-react'
-import { ACTIONS_URL, ApiError, SITE_URL, Session, api } from '@/lib/api'
-import { getIdToken, mountGoogleButton, onTokenChange, signOut, startGoogleAuth } from '@/lib/google-auth'
+import { ACTIONS_URL, ApiError, SITE_URL, Session, api, startSession } from '@/lib/api'
+import { getToken, mountGoogleButton, onTokenChange, signOut, startGoogleAuth } from '@/lib/google-auth'
 import { extractEvent, extractLaunch, FetchedPage, Suggestion } from '@/lib/extract'
 import { eventToSheet, launchToSheet, SheetEvent, SheetLaunch, sheetToEvent, sheetToLaunch, formatTime } from '@/lib/mapping'
 import { BuildInfo, BuildRun, EventItem, LaunchItem, LocationMethod, Meta, Target, launchSites, prefectures } from '@/lib/types'
@@ -47,9 +47,13 @@ export default function Page() {
   const [session, setSession] = useState<Session | null>(null)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
+  const handled = useRef<string | null>(null)
   useEffect(() => {
-    // ID トークンが変わるたびに：無くなればログイン画面へ。新しく取れたら（未ログインなら）使えるかを GAS に確かめる
+    // ログイン状態が変わるたびに：無くなればログイン画面へ。新しくログインしたら（未ログインなら）使えるかを GAS に確かめる
     const handle = async (token: string | null) => {
+      // 同じログインを二度確かめない（開いたときに保存済みのセッションで呼ばれるため）
+      if (token && token === handled.current) return
+      handled.current = token
       if (!token) {
         setSession(null)
         return
@@ -58,22 +62,22 @@ export default function Page() {
       try {
         const r = await api<{ me: Session }>('whoami')
         // 確かめている間にログアウトや取り直しがあれば、古い結果は使わない
-        if (getIdToken() !== token) return
+        if (getToken() !== token) return
         setError('')
         setSession((cur) => cur ?? r.me)
       } catch (e) {
-        if (getIdToken() !== token) return
+        if (getToken() !== token) return
         setError((e as Error).message)
-        // 使えないアカウントのままにせず、別のアカウントを選べるようにする
-        if (e instanceof ApiError && e.code !== 'ACCESS_UNAVAILABLE') signOut()
+        // 使えないアカウントのままにせず、別のアカウントを選べるようにする（通信の失敗などではログアウトしない）
+        if (e instanceof ApiError && e.code === 'NOT_ALLOWED') signOut()
       } finally {
         setChecking(false)
       }
     }
     const off = onTokenChange((t) => { void handle(t) })
-    startGoogleAuth().catch((e) => setError((e as Error).message))
-    const t = getIdToken()
-    if (t) void handle(t)
+    startGoogleAuth(startSession, (e) => setError(e.message)).catch((e) => setError((e as Error).message))
+    const t = getToken()
+    if (t) void handle(t) // すでにログインしていたとき（開き直しなど）
     return off
   }, [])
   if (!session) return <LoginView checking={checking} error={error} />
